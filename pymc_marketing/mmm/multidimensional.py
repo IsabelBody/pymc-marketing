@@ -1431,6 +1431,89 @@ class MMM(ModelBuilder):
 
         return posterior_predictive_samples
 
+    def compute_mean_contributions_over_time(
+        self,
+        original_scale: bool = True,
+    ) -> pd.DataFrame:
+        """Compute the mean contributions over time for each component of the model.
+
+        Parameters
+        ----------
+        original_scale : bool, optional
+            Whether to return the contributions in the original scale, by default True.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the mean contributions over time for each component.
+            The DataFrame has a datetime index and columns for each component:
+            - One column per channel showing media contributions
+            - 'baseline' column for the baseline contribution
+            - 'control' column if control variables were used
+            - 'seasonality' column if yearly seasonality was modeled
+        """
+        # Get posterior samples
+        posterior = self.idata.posterior
+
+        # Initialize contributions dictionary
+        contributions = {}
+
+        # Calculate baseline contribution
+        baseline = posterior["baseline_intercept"].mean(dim=["chain", "draw"])
+        if self.time_varying_intercept:
+            baseline = baseline * posterior["intercept_multiplier"].mean(dim=["chain", "draw"])
+        contributions["baseline"] = baseline
+
+        # Calculate channel contributions
+        channel_data = self.xarray_dataset._channel
+        
+        # Apply adstock and saturation transformations
+        if self.adstock_first:
+            transformed_data = self.adstock.transform(channel_data)
+            transformed_data = self.saturation.transform(transformed_data)
+        else:
+            transformed_data = self.saturation.transform(channel_data)
+            transformed_data = self.adstock.transform(transformed_data)
+
+        # Calculate media contributions
+        beta_media = posterior["beta_media"].mean(dim=["chain", "draw"])
+        if self.time_varying_media:
+            media_multiplier = posterior["media_multiplier"].mean(dim=["chain", "draw"])
+            beta_media = beta_media * media_multiplier
+
+        channel_contributions = (transformed_data * beta_media)
+        
+        for idx, channel in enumerate(self.channel_columns):
+            contributions[channel] = channel_contributions.sel(channel=channel)
+
+        # Add control variables if present
+        if self.control_columns is not None:
+            control_data = self.xarray_dataset.control_data
+            beta_control = posterior["beta_control"].mean(dim=["chain", "draw"])
+            control_contribution = (control_data * beta_control).sum(dim="control")
+            contributions["control"] = control_contribution
+
+        # Add seasonality if present
+        if self.yearly_seasonality is not None:
+            fourier_features = self.yearly_fourier.transform(
+                self.xarray_dataset.date.dt.dayofyear
+            )
+            gamma_fourier = posterior["gamma_fourier"].mean(dim=["chain", "draw"])
+            seasonality = (fourier_features * gamma_fourier).sum(dim="fourier_mode")
+            contributions["seasonality"] = seasonality
+
+        # Convert to DataFrame
+        df_contributions = pd.DataFrame(contributions)
+        df_contributions.index = self.xarray_dataset.date.values
+
+        # Scale back to original scale if requested
+        if original_scale:
+            target_transformer = self.get_target_transformer()
+            if hasattr(target_transformer, "scale_"):
+                df_contributions = df_contributions * target_transformer.scale_
+
+        return df_contributions
+
 
 def create_sample_kwargs(
     sampler_config: dict[str, Any] | None,
