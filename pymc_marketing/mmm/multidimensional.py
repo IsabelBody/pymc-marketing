@@ -1434,7 +1434,6 @@ class MMM(ModelBuilder):
     def compute_mean_contributions_over_time(
         self,
         original_scale: bool = True,
-        aggregate_dims: list[str] | None = None,
     ) -> pd.DataFrame:
         """Compute the mean contributions over time for each component of the model.
 
@@ -1442,12 +1441,7 @@ class MMM(ModelBuilder):
         ----------
         original_scale : bool, optional
             Whether to return the contributions in the original scale, by default True.
-        aggregate_dims : list[str] | None, optional
-            List of dimension names to aggregate over. If None, keeps all dimensions.
-            'date' dimension is always preserved. Example:
-            - None: show all dimensions (e.g., channel × range)
-            - ['range']: aggregate over range dimension, showing only channel level
-            - []: keep all dimensions separate
+            Note: contributions are already in original scale in the model output.
 
         Returns
         -------
@@ -1459,124 +1453,17 @@ class MMM(ModelBuilder):
             - 'control' column if control variables were used
             - 'seasonality' column if yearly seasonality was modeled
         """
-        # Get posterior samples
-        posterior = self.idata.posterior
-
-        # Initialize contributions dictionary
-        contributions = {}
-
         try:
-            # Helper function to process contributions
-            def process_contribution(data, name, extra_dims=None):
-                if not isinstance(data, xr.DataArray):
-                    return {name: data}
-                
-                # Always preserve 'date' dimension
-                dims_to_mean = [dim for dim in data.dims if dim not in ['date']]
-                
-                # Remove dimensions we want to keep from dims_to_mean
-                if aggregate_dims is not None:
-                    dims_to_keep = [dim for dim in dims_to_mean 
-                                  if dim not in aggregate_dims and dim != 'channel']
-                    dims_to_mean = [dim for dim in dims_to_mean if dim in aggregate_dims]
-                else:
-                    dims_to_keep = dims_to_mean
-                    dims_to_mean = []
-
-                # Mean over specified dimensions
-                if dims_to_mean:
-                    data = data.mean(dim=dims_to_mean)
-
-                # Convert to numpy and create column names
-                if isinstance(data, xr.DataArray):
-                    data_values = data.values
-                else:
-                    data_values = data
-
-                result = {}
-                if data_values.ndim == 1:
-                    result[name] = data_values
-                else:
-                    # Create column names based on remaining dimensions
-                    if isinstance(data, xr.DataArray):
-                        # Get coordinates for remaining dimensions
-                        coords = {dim: data[dim].values for dim in dims_to_keep 
-                                if dim != 'date' and dim in data.dims}
-                        
-                        # Create column names with all dimension combinations
-                        import itertools
-                        dim_values = [coords[dim] for dim in coords]
-                        dim_names = list(coords.keys())
-                        
-                        for values in itertools.product(*dim_values):
-                            col_name = f"{name}_" + "_".join(f"{dim}_{val}" 
-                                for dim, val in zip(dim_names, values))
-                            # Select data for this combination
-                            selector = {dim: val for dim, val in zip(dim_names, values)}
-                            result[col_name] = data.sel(**selector).values
-
-                return result
-
-            # Add baseline/intercept contribution
-            if "intercept_contribution" in posterior:
-                dims_to_mean = [dim for dim in posterior["intercept_contribution"].dims 
-                              if dim not in ['date']]
-                baseline = posterior["intercept_contribution"].mean(dim=dims_to_mean)
-                contributions.update(process_contribution(baseline, "baseline"))
-
-            # Add channel contributions
-            if "channel_contribution" in posterior:
-                dims_to_mean = [dim for dim in posterior["channel_contribution"].dims 
-                              if dim not in ['date', 'channel']]
-                channel_contributions = posterior["channel_contribution"].mean(dim=dims_to_mean)
-                
-                for channel in self.channel_columns:
-                    channel_data = channel_contributions.sel(channel=channel)
-                    contributions.update(process_contribution(channel_data, channel))
-
-            # Add control variables contribution if present
-            if "control_contribution" in posterior:
-                dims_to_mean = [dim for dim in posterior["control_contribution"].dims 
-                              if dim not in ['date']]
-                control = posterior["control_contribution"].mean(dim=dims_to_mean)
-                contributions.update(process_contribution(control, "control"))
-
-            # Add seasonality contribution if present
-            if "yearly_seasonality_contribution" in posterior:
-                dims_to_mean = [dim for dim in posterior["yearly_seasonality_contribution"].dims 
-                              if dim not in ['date']]
-                seasonality = posterior["yearly_seasonality_contribution"].mean(dim=dims_to_mean)
-                contributions.update(process_contribution(seasonality, "seasonality"))
-
-            # Create DataFrame
-            df_contributions = pd.DataFrame(contributions, index=self.xarray_dataset.date.values)
-
-            # Scale back to original scale if requested
-            if original_scale and "total_media_contribution_original_scale" in posterior:
-                dims_to_mean = [dim for dim in posterior["total_media_contribution_original_scale"].dims 
-                              if dim not in ['date']]
-                scale_factor = (
-                    posterior["total_media_contribution_original_scale"].mean(dim=dims_to_mean) /
-                    posterior["channel_contribution"].sum("channel").mean(dim=dims_to_mean)
-                ).mean()
-                if isinstance(scale_factor, xr.DataArray):
-                    scale_factor = scale_factor.values
-                df_contributions = df_contributions * scale_factor
-
-            # Format numbers to avoid scientific notation
-            pd.options.display.float_format = '{:.2f}'.format
-            
-            return df_contributions
-
+            return self._get_contributions(self.idata)
         except Exception as e:
             print(f"Error occurred: {str(e)}")
-            print("Available variables:", list(posterior.variables))
+            print("Available variables:", list(self.idata.posterior.variables))
             print("Dimensions of variables:")
-            for var in posterior.variables:
+            for var in self.idata.posterior.variables:
                 if var not in ['chain', 'draw']:
-                    print(f"{var}: {posterior[var].dims}")
-                    if var in posterior:
-                        print(f"{var} shape: {posterior[var].shape}")
+                    print(f"{var}: {self.idata.posterior[var].dims}")
+                    if var in self.idata.posterior:
+                        print(f"{var} shape: {self.idata.posterior[var].shape}")
             raise
 
 
@@ -1621,3 +1508,39 @@ def create_sample_kwargs(
     # Update with additional keyword arguments
     sampler_config.update(kwargs)
     return sampler_config
+
+def _get_contributions(self, idata: InferenceData) -> pd.DataFrame:
+    """Get the contributions of each component from the inference data.
+    
+    This method extracts contribution values directly from the posterior samples
+    and combines them into a DataFrame.
+    """
+    # Get mean values across chains and draws
+    contributions = {}
+    
+    # Media contributions - already in correct scale from the model
+    media = idata.posterior["channel_contribution"].mean(dim=["chain", "draw"])
+    # Sum across ranges (product categories) to get total media effect
+    media_by_channel = media.sum(dim="range")
+    for channel in media_by_channel.coords["channel"].values:
+        contributions[channel] = media_by_channel.sel(channel=channel)
+
+    # Control contributions 
+    control = idata.posterior["control_contribution"].mean(dim=["chain", "draw"])
+    control_total = control.sum(dim="range")
+    for ctrl in control_total.coords["control"].values:
+        contributions[ctrl] = control_total.sel(control=ctrl)
+
+    # Seasonality contributions
+    seasonality = idata.posterior["yearly_seasonality_contribution"].mean(dim=["chain", "draw"])
+    contributions["seasonality"] = seasonality.sum(dim="range")
+
+    # Baseline (intercept) contribution
+    baseline = idata.posterior["intercept_contribution"].mean(dim=["chain", "draw"])
+    contributions["baseline_"] = baseline.sum(dim="range")
+
+    # Convert to DataFrame
+    df = pd.DataFrame(contributions)
+    df.index = idata.posterior.coords["date"].values
+    
+    return df
