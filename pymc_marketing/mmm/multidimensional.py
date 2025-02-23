@@ -1466,6 +1466,40 @@ class MMM(ModelBuilder):
                         print(f"{var} shape: {self.idata.posterior[var].shape}")
             raise
 
+    def _get_contributions(self, idata: az.InferenceData) -> pd.DataFrame:
+        """Get the contributions of each component from the inference data."""
+        # Get mean values across chains and draws
+        contributions = {}
+        
+        # Media contributions - already in correct scale from the model
+        media = idata.posterior["channel_contribution"].mean(dim=["chain", "draw"])
+        # Sum across ranges (product categories) to get total media effect
+        media_by_channel = media.sum(dim="range")
+        for channel in media_by_channel.coords["channel"].values:
+            contributions[channel] = media_by_channel.sel(channel=channel)
+
+        # Control contributions 
+        if "control_contribution" in idata.posterior:
+            control = idata.posterior["control_contribution"].mean(dim=["chain", "draw"])
+            control_total = control.sum(dim="range")
+            for ctrl in control_total.coords["control"].values:
+                contributions[ctrl] = control_total.sel(control=ctrl)
+
+        # Seasonality contributions
+        if "yearly_seasonality_contribution" in idata.posterior:
+            seasonality = idata.posterior["yearly_seasonality_contribution"].mean(dim=["chain", "draw"])
+            contributions["seasonality"] = seasonality.sum(dim="range")
+
+        # Baseline (intercept) contribution
+        baseline = idata.posterior["intercept_contribution"].mean(dim=["chain", "draw"])
+        contributions["baseline"] = baseline.sum(dim="range")
+
+        # Convert to DataFrame
+        df = pd.DataFrame(contributions)
+        df.index = idata.posterior.coords["date"].values
+        
+        return df
+
 
 def create_sample_kwargs(
     sampler_config: dict[str, Any] | None,
@@ -1508,39 +1542,3 @@ def create_sample_kwargs(
     # Update with additional keyword arguments
     sampler_config.update(kwargs)
     return sampler_config
-
-def _get_contributions(self, idata: InferenceData) -> pd.DataFrame:
-    """Get the contributions of each component from the inference data.
-    
-    This method extracts contribution values directly from the posterior samples
-    and combines them into a DataFrame.
-    """
-    # Get mean values across chains and draws
-    contributions = {}
-    
-    # Media contributions - already in correct scale from the model
-    media = idata.posterior["channel_contribution"].mean(dim=["chain", "draw"])
-    # Sum across ranges (product categories) to get total media effect
-    media_by_channel = media.sum(dim="range")
-    for channel in media_by_channel.coords["channel"].values:
-        contributions[channel] = media_by_channel.sel(channel=channel)
-
-    # Control contributions 
-    control = idata.posterior["control_contribution"].mean(dim=["chain", "draw"])
-    control_total = control.sum(dim="range")
-    for ctrl in control_total.coords["control"].values:
-        contributions[ctrl] = control_total.sel(control=ctrl)
-
-    # Seasonality contributions
-    seasonality = idata.posterior["yearly_seasonality_contribution"].mean(dim=["chain", "draw"])
-    contributions["seasonality"] = seasonality.sum(dim="range")
-
-    # Baseline (intercept) contribution
-    baseline = idata.posterior["intercept_contribution"].mean(dim=["chain", "draw"])
-    contributions["baseline_"] = baseline.sum(dim="range")
-
-    # Convert to DataFrame
-    df = pd.DataFrame(contributions)
-    df.index = idata.posterior.coords["date"].values
-    
-    return df
