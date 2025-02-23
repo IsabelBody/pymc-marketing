@@ -1545,10 +1545,11 @@ class MMM(ModelBuilder):
 
         # Get the data in appropriate scale
         if original_scale:
-            y = self.y_orig_
-            y_pred = self.idata.posterior_predictive.y_obs
+            target_scale = self.get_scales_as_xarray()['target_scale'].values[0]
+            y = self.y * target_scale
+            y_pred = self.idata.posterior_predictive.y * target_scale
         else:
-            y = self.y_
+            y = self.y
             y_pred = self.idata.posterior_predictive.y
 
         # Create the plot
