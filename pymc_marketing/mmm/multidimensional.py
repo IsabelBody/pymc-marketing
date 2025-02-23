@@ -1445,7 +1445,6 @@ class MMM(ModelBuilder):
             DataFrame containing the contributions over time.
         """
         contributions = {}
-        target_scale = idata.posterior["target_scale"].mean().values
         
         # Media contributions
         channel_contributions = idata.posterior["channel_contribution"].mean(dim=["chain", "draw"])
@@ -1453,7 +1452,7 @@ class MMM(ModelBuilder):
             contributions[channel_name] = (
                 channel_contributions.sel(channel=channel_name)
                 .sum(dim="range")
-                .values * target_scale
+                .values
             )
 
         # Control contributions 
@@ -1461,16 +1460,16 @@ class MMM(ModelBuilder):
             control = idata.posterior["control_contribution"].mean(dim=["chain", "draw"])
             control_total = control.sum(dim="range")
             for ctrl in self.control_columns:
-                contributions[ctrl] = control_total.sel(control=ctrl).values * target_scale
+                contributions[ctrl] = control_total.sel(control=ctrl).values
 
         # Seasonality contributions
         if "yearly_seasonality_contribution" in idata.posterior:
             seasonality = idata.posterior["yearly_seasonality_contribution"].mean(dim=["chain", "draw"])
-            contributions["seasonality"] = seasonality.sum(dim="range").values * target_scale
+            contributions["seasonality"] = seasonality.sum(dim="range").values
 
         # Baseline (intercept) contribution
         baseline = idata.posterior["intercept_contribution"].mean(dim=["chain", "draw"])
-        contributions["baseline"] = baseline.sum(dim="range").values * target_scale
+        contributions["baseline"] = baseline.sum(dim="range").values
 
         # Convert to DataFrame
         df = pd.DataFrame(contributions)
@@ -1482,7 +1481,19 @@ class MMM(ModelBuilder):
         self,
         original_scale: bool = True,
     ) -> pd.DataFrame:
-        """Compute the mean contributions over time for each component of the model."""
+        """Compute the mean contributions over time for each component of the model.
+        
+        Parameters
+        ----------
+        original_scale : bool, optional
+            Whether to return the contributions in the original scale, by default True.
+            Note: In the current implementation, contributions are already in original scale.
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing the mean contributions over time for each component.
+        """
         try:
             return self._get_contributions(self.idata)
         except Exception as e:
