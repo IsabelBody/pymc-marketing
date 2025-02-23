@@ -45,6 +45,7 @@ from pymc_marketing.mmm.tvp import infer_time_index
 from pymc_marketing.model_builder import ModelBuilder, _handle_deprecate_pred_argument
 from pymc_marketing.model_config import parse_model_config
 from pymc_marketing.prior import Prior, create_dim_handler
+import matplotlib.pyplot as plt
 
 PYMC_MARKETING_ISSUE = "https://github.com/pymc-labs/pymc-marketing/issues/new"
 warning_msg = (
@@ -1509,6 +1510,94 @@ class MMM(ModelBuilder):
                     if var in self.idata.posterior:
                         print(f"{var} shape: {self.idata.posterior[var].shape}")
             raise
+
+    def plot_posterior_predictive(
+        self,
+        original_scale: bool = False,
+        hdi_list: list[float] | None = None,
+        gradient: bool = True,
+        **plt_kwargs: Any,
+    ) -> plt.Figure:
+        """Plot posterior predictive samples against observed data.
+
+        Parameters
+        ----------
+        original_scale : bool, optional
+            If True, plot the data in the original scale. If False, plot in the transformed scale.
+        hdi_list : list[float], optional
+            List of probabilities to compute HDI intervals for.
+        gradient : bool, optional
+            If True, show gradient of uncertainty. If False, show HDI intervals.
+        **plt_kwargs : dict
+            Additional keyword arguments passed to matplotlib plotting functions.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The figure containing the plot.
+        """
+        self._validate_model_was_built()
+        
+        if not hasattr(self, "idata"):
+            raise ValueError(
+                "No inference data found. Please run .fit() before plotting predictions."
+            )
+
+        # Get the data in appropriate scale
+        if original_scale:
+            y = self.y_orig_
+            y_pred = self.idata.posterior_predictive.y_obs
+        else:
+            y = self.y_
+            y_pred = self.idata.posterior_predictive.y
+
+        # Create the plot
+        fig, ax = plt.subplots(**plt_kwargs)
+        
+        # Plot observed data
+        ax.scatter(range(len(y)), y, color='black', alpha=0.5, label='Observed', zorder=5)
+        
+        # Plot posterior predictive
+        if gradient:
+            # Plot gradient of uncertainty
+            percentiles = np.linspace(0.1, 99.9, 100)
+            percentile_values = np.percentile(y_pred, percentiles, axis=(0,1))
+            
+            # Create gradient effect
+            for i in range(len(percentiles)-1):
+                alpha = 0.05 - (0.05 * abs(50-i)/50)
+                ax.fill_between(
+                    range(len(y)),
+                    percentile_values[i],
+                    percentile_values[i+1],
+                    alpha=alpha,
+                    color='C0'
+                )
+        else:
+            # Plot HDI intervals
+            if hdi_list is None:
+                hdi_list = [0.95]
+                
+            for hdi_prob in sorted(hdi_list):
+                hdi = az.hdi(y_pred, hdi_prob=hdi_prob)
+                ax.fill_between(
+                    range(len(y)),
+                    hdi[:, 0],
+                    hdi[:, 1],
+                    alpha=0.3,
+                    label=f'{int(hdi_prob * 100)}% HDI'
+                )
+        
+        # Plot mean prediction
+        mean_pred = y_pred.mean(axis=(0,1))
+        ax.plot(range(len(y)), mean_pred, 'C0-', label='Mean prediction', zorder=4)
+        
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Response' if original_scale else 'Transformed Response')
+        ax.legend()
+        
+        return fig
+
 
 
 def create_sample_kwargs(
