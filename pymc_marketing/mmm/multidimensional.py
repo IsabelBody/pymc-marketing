@@ -1455,41 +1455,56 @@ class MMM(ModelBuilder):
         # Get posterior samples
         posterior = self.idata.posterior
 
+        # Print available variables for debugging
+        print("Available variables in posterior:", list(posterior.variables))
+
         # Initialize contributions dictionary
         contributions = {}
 
-        # Add baseline/intercept contribution
-        contributions["baseline"] = posterior["intercept_contribution"].mean(dim=["chain", "draw"])
+        try:
+            # Add baseline/intercept contribution
+            if "intercept_contribution" in posterior:
+                contributions["baseline"] = posterior["intercept_contribution"].mean(dim=["chain", "draw"])
+            else:
+                raise KeyError("No intercept_contribution found in posterior")
 
-        # Add channel contributions
-        channel_contributions = posterior["channel_contribution"].mean(dim=["chain", "draw"])
-        for channel in self.channel_columns:
-            contributions[channel] = channel_contributions.sel(channel=channel)
+            # Add channel contributions
+            if "channel_contribution" in posterior:
+                channel_contributions = posterior["channel_contribution"].mean(dim=["chain", "draw"])
+                for channel in self.channel_columns:
+                    contributions[channel] = channel_contributions.sel(channel=channel)
+            else:
+                raise KeyError("No channel_contribution found in posterior")
 
-        # Add control variables contribution if present
-        if "control_contribution" in posterior:
-            contributions["control"] = posterior["control_contribution"].mean(dim=["chain", "draw"])
+            # Add control variables contribution if present
+            if "control_contribution" in posterior:
+                contributions["control"] = posterior["control_contribution"].mean(dim=["chain", "draw"])
 
-        # Add seasonality contribution if present
-        if "yearly_seasonality_contribution" in posterior:
-            contributions["seasonality"] = posterior["yearly_seasonality_contribution"].mean(
-                dim=["chain", "draw"]
-            )
+            # Add seasonality contribution if present
+            if "yearly_seasonality_contribution" in posterior:
+                contributions["seasonality"] = posterior["yearly_seasonality_contribution"].mean(
+                    dim=["chain", "draw"]
+                )
 
-        # Convert to DataFrame
-        df_contributions = pd.DataFrame(contributions)
-        df_contributions.index = self.xarray_dataset.date.values
+            # Convert to DataFrame
+            df_contributions = pd.DataFrame(contributions)
+            df_contributions.index = self.xarray_dataset.date.values
 
-        # Scale back to original scale if requested
-        if original_scale and "total_media_contribution_original_scale" in posterior:
-            # Use the scaling factor from the model's total media contribution
-            scale_factor = (
-                posterior["total_media_contribution_original_scale"].mean(dim=["chain", "draw"]) /
-                posterior["channel_contribution"].sum("channel").mean(dim=["chain", "draw"])
-            ).mean()
-            df_contributions = df_contributions * scale_factor
+            # Scale back to original scale if requested
+            if original_scale and "total_media_contribution_original_scale" in posterior:
+                # Use the scaling factor from the model's total media contribution
+                scale_factor = (
+                    posterior["total_media_contribution_original_scale"].mean(dim=["chain", "draw"]) /
+                    posterior["channel_contribution"].sum("channel").mean(dim=["chain", "draw"])
+                ).mean()
+                df_contributions = df_contributions * scale_factor
 
-        return df_contributions
+            return df_contributions
+
+        except Exception as e:
+            print(f"Error occurred: {str(e)}")
+            print("Available variables:", list(posterior.variables))
+            raise
 
 
 def create_sample_kwargs(
