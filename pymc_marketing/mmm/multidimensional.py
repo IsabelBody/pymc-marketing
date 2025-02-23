@@ -1431,41 +1431,6 @@ class MMM(ModelBuilder):
 
         return posterior_predictive_samples
 
-    def compute_mean_contributions_over_time(
-        self,
-        original_scale: bool = True,
-    ) -> pd.DataFrame:
-        """Compute the mean contributions over time for each component of the model.
-
-        Parameters
-        ----------
-        original_scale : bool, optional
-            Whether to return the contributions in the original scale, by default True.
-            Note: contributions are already in original scale in the model output.
-
-        Returns
-        -------
-        pd.DataFrame
-            A DataFrame containing the mean contributions over time for each component.
-            The DataFrame has a datetime index and columns for each component:
-            - One column per channel showing media contributions
-            - 'baseline' column for the baseline contribution
-            - 'control' column if control variables were used
-            - 'seasonality' column if yearly seasonality was modeled
-        """
-        try:
-            return self._get_contributions(self.idata)
-        except Exception as e:
-            print(f"Error occurred: {str(e)}")
-            print("Available variables:", list(self.idata.posterior.variables))
-            print("Dimensions of variables:")
-            for var in self.idata.posterior.variables:
-                if var not in ['chain', 'draw']:
-                    print(f"{var}: {self.idata.posterior[var].dims}")
-                    if var in self.idata.posterior:
-                        print(f"{var} shape: {self.idata.posterior[var].shape}")
-            raise
-
     def _get_contributions(self, idata: az.InferenceData) -> pd.DataFrame:
         """Get the contributions of each component from the inference data."""
         # Get mean values across chains and draws
@@ -1500,45 +1465,20 @@ class MMM(ModelBuilder):
         
         return df
 
-
-def create_sample_kwargs(
-    sampler_config: dict[str, Any] | None,
-    progressbar: bool | None,
-    random_seed: RandomState | None,
-    **kwargs,
-) -> dict[str, Any]:
-    """Create the dictionary of keyword arguments for `pm.sample`.
-
-    Parameters
-    ----------
-    sampler_config : dict | None
-        The configuration dictionary for the sampler. If None, defaults to an empty dict.
-    progressbar : bool, optional
-        Whether to show the progress bar during sampling. Defaults to True.
-    random_seed : RandomState, optional
-        The random seed for the sampler.
-    **kwargs : Any
-        Additional keyword arguments to pass to the sampler.
-
-    Returns
-    -------
-    dict
-        The dictionary of keyword arguments for `pm.sample`.
-    """
-    # Ensure sampler_config is a dictionary
-    sampler_config = sampler_config.copy() if sampler_config is not None else {}
-
-    # Handle progress bar configuration
-    sampler_config["progressbar"] = (
-        progressbar
-        if progressbar is not None
-        else sampler_config.get("progressbar", True)
-    )
-
-    # Add random seed if provided
-    if random_seed is not None:
-        sampler_config["random_seed"] = random_seed
-
-    # Update with additional keyword arguments
-    sampler_config.update(kwargs)
-    return sampler_config
+    def compute_mean_contributions_over_time(
+        self,
+        original_scale: bool = True,
+    ) -> pd.DataFrame:
+        """Compute the mean contributions over time for each component of the model."""
+        try:
+            return self._get_contributions(self.idata)
+        except Exception as e:
+            print(f"Error occurred: {str(e)}")
+            print("Available variables:", list(self.idata.posterior.variables))
+            print("Dimensions of variables:")
+            for var in self.idata.posterior.variables:
+                if var not in ['chain', 'draw']:
+                    print(f"{var}: {self.idata.posterior[var].dims}")
+                    if var in self.idata.posterior:
+                        print(f"{var} shape: {self.idata.posterior[var].shape}")
+            raise
