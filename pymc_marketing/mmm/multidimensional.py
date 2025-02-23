@@ -1446,9 +1446,8 @@ class MMM(ModelBuilder):
         """
         contributions = {}
         
-        # Get the scaling factors
-        scales = self.get_scales_as_xarray()
-        target_scale = scales.target.values if hasattr(scales, 'target') else 1.0
+        # Get the target scale from scalers
+        target_scale = self.get_scales_as_xarray()['target_scale'].values[0]
         
         # Media contributions
         channel_contributions = idata.posterior["channel_contribution"].mean(dim=["chain", "draw"])
