@@ -1445,30 +1445,32 @@ class MMM(ModelBuilder):
             DataFrame containing the contributions over time.
         """
         contributions = {}
+        target_scale = idata.posterior["target_scale"].mean().values
         
-        # Media contributions - already in correct scale from the model
+        # Media contributions
         channel_contributions = idata.posterior["channel_contribution"].mean(dim=["chain", "draw"])
-        # Sum across ranges (product categories) to get total media effect
         for channel_name in self.channel_columns:
-            contributions[channel_name] = channel_contributions.sel(
-                channel=channel_name
-            ).sum(dim="range").values
+            contributions[channel_name] = (
+                channel_contributions.sel(channel=channel_name)
+                .sum(dim="range")
+                .values * target_scale
+            )
 
         # Control contributions 
         if "control_contribution" in idata.posterior:
             control = idata.posterior["control_contribution"].mean(dim=["chain", "draw"])
             control_total = control.sum(dim="range")
             for ctrl in self.control_columns:
-                contributions[ctrl] = control_total.sel(control=ctrl).values
+                contributions[ctrl] = control_total.sel(control=ctrl).values * target_scale
 
         # Seasonality contributions
         if "yearly_seasonality_contribution" in idata.posterior:
             seasonality = idata.posterior["yearly_seasonality_contribution"].mean(dim=["chain", "draw"])
-            contributions["seasonality"] = seasonality.sum(dim="range").values
+            contributions["seasonality"] = seasonality.sum(dim="range").values * target_scale
 
         # Baseline (intercept) contribution
         baseline = idata.posterior["intercept_contribution"].mean(dim=["chain", "draw"])
-        contributions["baseline"] = baseline.sum(dim="range").values
+        contributions["baseline"] = baseline.sum(dim="range").values * target_scale
 
         # Convert to DataFrame
         df = pd.DataFrame(contributions)
