@@ -1432,30 +1432,36 @@ class MMM(ModelBuilder):
         return posterior_predictive_samples
 
     def _get_contributions(self, idata: az.InferenceData) -> pd.DataFrame:
-        """Get the contributions of each component from the inference data."""
-        # Get mean values across chains and draws
+        """Get the contributions of each component over time.
+        
+        Parameters
+        ----------
+        idata : az.InferenceData
+            The inference data object containing the posterior samples.
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing the contributions over time.
+        """
         contributions = {}
         
-        # Media contributions - already in correct scale from the model
-        media = idata.posterior["channel_contribution"].mean(dim=["chain", "draw"])
-        # Sum across ranges (product categories) to get total media effect
-        media_by_channel = media.sum(dim="range")
-        for channel in media_by_channel.coords["channel"].values:
-            contributions[channel] = media_by_channel.sel(channel=channel)
-
-        # Control contributions 
+        # Get channel contributions
+        channel_contributions = idata.posterior["channel_contribution"].mean(dim=["chain", "draw"])
+        for i, channel in enumerate(self.channel_columns):
+            contributions[channel] = channel_contributions.sel(channel=i).sum(dim="range")
+            
+        # Get control contributions if they exist
         if "control_contribution" in idata.posterior:
-            control = idata.posterior["control_contribution"].mean(dim=["chain", "draw"])
-            control_total = control.sum(dim="range")
-            for ctrl in control_total.coords["control"].values:
-                contributions[ctrl] = control_total.sel(control=ctrl)
-
-        # Seasonality contributions
+            control_contributions = idata.posterior["control_contribution"].mean(dim=["chain", "draw"])
+            for i, control in enumerate(self.control_columns):
+                contributions[control] = control_contributions.sel(control=i).sum(dim="range")
+        
+        # Get yearly seasonality contribution if it exists
         if "yearly_seasonality_contribution" in idata.posterior:
-            seasonality = idata.posterior["yearly_seasonality_contribution"].mean(dim=["chain", "draw"])
-            contributions["seasonality"] = seasonality.sum(dim="range")
-
-        # Baseline (intercept) contribution
+            contributions["seasonality"] = idata.posterior["yearly_seasonality_contribution"].mean(dim=["chain", "draw"]).sum(dim="range")
+        
+        # Get baseline contribution
         baseline = idata.posterior["intercept_contribution"].mean(dim=["chain", "draw"])
         contributions["baseline"] = baseline.sum(dim="range")
 
@@ -1482,3 +1488,46 @@ class MMM(ModelBuilder):
                     if var in self.idata.posterior:
                         print(f"{var} shape: {self.idata.posterior[var].shape}")
             raise
+
+
+def create_sample_kwargs(
+    sampler_config: dict[str, Any] | None,
+    progressbar: bool | None,
+    random_seed: RandomState | None,
+    **kwargs,
+) -> dict[str, Any]:
+    """Create the dictionary of keyword arguments for `pm.sample`.
+
+    Parameters
+    ----------
+    sampler_config : dict | None
+        The configuration dictionary for the sampler. If None, defaults to an empty dict.
+    progressbar : bool, optional
+        Whether to show the progress bar during sampling. Defaults to True.
+    random_seed : RandomState, optional
+        The random seed for the sampler.
+    **kwargs : Any
+        Additional keyword arguments to pass to the sampler.
+
+    Returns
+    -------
+    dict
+        The dictionary of keyword arguments for `pm.sample`.
+    """
+    # Ensure sampler_config is a dictionary
+    sampler_config = sampler_config.copy() if sampler_config is not None else {}
+
+    # Handle progress bar configuration
+    sampler_config["progressbar"] = (
+        progressbar
+        if progressbar is not None
+        else sampler_config.get("progressbar", True)
+    )
+
+    # Add random seed if provided
+    if random_seed is not None:
+        sampler_config["random_seed"] = random_seed
+
+    # Update with additional keyword arguments
+    sampler_config.update(kwargs)
+    return sampler_config
