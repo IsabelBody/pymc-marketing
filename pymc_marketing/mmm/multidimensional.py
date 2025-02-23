@@ -1533,6 +1533,9 @@ class MMM(ModelBuilder):
                     scale_factor = scale_factor.values
                 df_contributions = df_contributions * scale_factor
 
+            # Format numbers to avoid scientific notation
+            pd.options.display.float_format = '{:.2f}'.format
+            
             return df_contributions
 
         except Exception as e:
