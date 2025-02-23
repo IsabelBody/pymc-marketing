@@ -1434,6 +1434,7 @@ class MMM(ModelBuilder):
     def compute_mean_contributions_over_time(
         self,
         original_scale: bool = True,
+        aggregate_dims: list[str] | None = None,
     ) -> pd.DataFrame:
         """Compute the mean contributions over time for each component of the model.
 
@@ -1441,6 +1442,12 @@ class MMM(ModelBuilder):
         ----------
         original_scale : bool, optional
             Whether to return the contributions in the original scale, by default True.
+        aggregate_dims : list[str] | None, optional
+            List of dimension names to aggregate over. If None, keeps all dimensions.
+            'date' dimension is always preserved. Example:
+            - None: show all dimensions (e.g., channel × range)
+            - ['range']: aggregate over range dimension, showing only channel level
+            - []: keep all dimensions separate
 
         Returns
         -------
@@ -1459,19 +1466,63 @@ class MMM(ModelBuilder):
         contributions = {}
 
         try:
+            # Helper function to process contributions
+            def process_contribution(data, name, extra_dims=None):
+                if not isinstance(data, xr.DataArray):
+                    return {name: data}
+                
+                # Always preserve 'date' dimension
+                dims_to_mean = [dim for dim in data.dims if dim not in ['date']]
+                
+                # Remove dimensions we want to keep from dims_to_mean
+                if aggregate_dims is not None:
+                    dims_to_keep = [dim for dim in dims_to_mean 
+                                  if dim not in aggregate_dims and dim != 'channel']
+                    dims_to_mean = [dim for dim in dims_to_mean if dim in aggregate_dims]
+                else:
+                    dims_to_keep = dims_to_mean
+                    dims_to_mean = []
+
+                # Mean over specified dimensions
+                if dims_to_mean:
+                    data = data.mean(dim=dims_to_mean)
+
+                # Convert to numpy and create column names
+                if isinstance(data, xr.DataArray):
+                    data_values = data.values
+                else:
+                    data_values = data
+
+                result = {}
+                if data_values.ndim == 1:
+                    result[name] = data_values
+                else:
+                    # Create column names based on remaining dimensions
+                    if isinstance(data, xr.DataArray):
+                        # Get coordinates for remaining dimensions
+                        coords = {dim: data[dim].values for dim in dims_to_keep 
+                                if dim != 'date' and dim in data.dims}
+                        
+                        # Create column names with all dimension combinations
+                        import itertools
+                        dim_values = [coords[dim] for dim in coords]
+                        dim_names = list(coords.keys())
+                        
+                        for values in itertools.product(*dim_values):
+                            col_name = f"{name}_" + "_".join(f"{dim}_{val}" 
+                                for dim, val in zip(dim_names, values))
+                            # Select data for this combination
+                            selector = {dim: val for dim, val in zip(dim_names, values)}
+                            result[col_name] = data.sel(**selector).values
+
+                return result
+
             # Add baseline/intercept contribution
             if "intercept_contribution" in posterior:
                 dims_to_mean = [dim for dim in posterior["intercept_contribution"].dims 
                               if dim not in ['date']]
                 baseline = posterior["intercept_contribution"].mean(dim=dims_to_mean)
-                if isinstance(baseline, xr.DataArray):
-                    baseline = baseline.values
-                if baseline.ndim > 1:
-                    baseline = baseline.reshape(len(self.xarray_dataset.date), -1)
-                    for i in range(baseline.shape[1]):
-                        contributions[f"baseline_{i}"] = baseline[:, i]
-                else:
-                    contributions["baseline"] = baseline
+                contributions.update(process_contribution(baseline, "baseline"))
 
             # Add channel contributions
             if "channel_contribution" in posterior:
@@ -1481,42 +1532,21 @@ class MMM(ModelBuilder):
                 
                 for channel in self.channel_columns:
                     channel_data = channel_contributions.sel(channel=channel)
-                    if isinstance(channel_data, xr.DataArray):
-                        channel_data = channel_data.values
-                    if channel_data.ndim > 1:
-                        channel_data = channel_data.reshape(len(self.xarray_dataset.date), -1)
-                        for i in range(channel_data.shape[1]):
-                            contributions[f"{channel}_{i}"] = channel_data[:, i]
-                    else:
-                        contributions[channel] = channel_data
+                    contributions.update(process_contribution(channel_data, channel))
 
             # Add control variables contribution if present
             if "control_contribution" in posterior:
                 dims_to_mean = [dim for dim in posterior["control_contribution"].dims 
                               if dim not in ['date']]
                 control = posterior["control_contribution"].mean(dim=dims_to_mean)
-                if isinstance(control, xr.DataArray):
-                    control = control.values
-                if control.ndim > 1:
-                    control = control.reshape(len(self.xarray_dataset.date), -1)
-                    for i in range(control.shape[1]):
-                        contributions[f"control_{i}"] = control[:, i]
-                else:
-                    contributions["control"] = control
+                contributions.update(process_contribution(control, "control"))
 
             # Add seasonality contribution if present
             if "yearly_seasonality_contribution" in posterior:
                 dims_to_mean = [dim for dim in posterior["yearly_seasonality_contribution"].dims 
                               if dim not in ['date']]
                 seasonality = posterior["yearly_seasonality_contribution"].mean(dim=dims_to_mean)
-                if isinstance(seasonality, xr.DataArray):
-                    seasonality = seasonality.values
-                if seasonality.ndim > 1:
-                    seasonality = seasonality.reshape(len(self.xarray_dataset.date), -1)
-                    for i in range(seasonality.shape[1]):
-                        contributions[f"seasonality_{i}"] = seasonality[:, i]
-                else:
-                    contributions["seasonality"] = seasonality
+                contributions.update(process_contribution(seasonality, "seasonality"))
 
             # Create DataFrame
             df_contributions = pd.DataFrame(contributions, index=self.xarray_dataset.date.values)
